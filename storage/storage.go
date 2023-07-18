@@ -4,6 +4,7 @@ import (
 	"cloud.google.com/go/storage"
 	"context"
 	"fmt"
+	log "github.com/sirupsen/logrus"
 	"google.golang.org/api/iterator"
 	"time"
 )
@@ -18,6 +19,7 @@ func CreateClientFromBackground() (*storage.Client, context.Context, error) {
 }
 
 func GetBuckets(client *storage.Client, ctx context.Context, projectID string) ([]storage.BucketAttrs, error) {
+	log.Debugf("Loading buckets for project : %v\n", projectID)
 
 	ctx, cancel := context.WithTimeout(ctx, time.Second*30)
 	defer cancel()
@@ -34,6 +36,8 @@ func GetBuckets(client *storage.Client, ctx context.Context, projectID string) (
 		}
 		buckets = append(buckets, *battrs)
 	}
+	log.Debugf("Loaded %v buckets for project : %v\n", len(buckets), projectID)
+
 	return buckets, nil
 }
 
