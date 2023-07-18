@@ -3,9 +3,19 @@ package storage
 import (
 	"cloud.google.com/go/storage"
 	"context"
+	"fmt"
 	"google.golang.org/api/iterator"
 	"time"
 )
+
+func CreateClientFromBackground() (*storage.Client, error) {
+	ctx := context.Background()
+	client, err := storage.NewClient(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("storage.NewClient: %w", err)
+	}
+	return client, err
+}
 
 func GetBuckets(client *storage.Client, ctx context.Context, projectID string) ([]storage.BucketAttrs, error) {
 
