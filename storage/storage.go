@@ -121,7 +121,6 @@ func ReadCSVFile(client *storage.Client, ctx context.Context, bucketName, fileNa
 	if err != nil {
 		return nil, fmt.Errorf("failed to open GCS object: %v", err)
 	}
-	defer r.Close()
 
 	// Parse the CSV data.
 	reader := csv.NewReader(r)
@@ -139,6 +138,11 @@ func ReadCSVFile(client *storage.Client, ctx context.Context, bucketName, fileNa
 	}
 	log.Debugf("Loaded %v rows from csv file gs://%v/%v", len(data), bucketName, fileName)
 
+	err = r.Close()
+	if err != nil {
+		log.Errorf("Error closing file gs://%v/%v", bucketName, fileName)
+	}
+
 	return data, nil
 }
 
@@ -154,14 +158,17 @@ func ReadFile(client *storage.Client, ctx context.Context, bucketName, fileName 
 	if err != nil {
 		return nil, fmt.Errorf("failed to open GCS object: %v", err)
 	}
-	defer r.Close()
-
 	data, err := io.ReadAll(r)
 	if err != nil {
 		return nil, fmt.Errorf("error reading CSV: %v", err)
 	}
 
 	log.Debugf("Loaded %v bytes from csv file gs://%v/%v", len(data), bucketName, fileName)
+
+	err = r.Close()
+	if err != nil {
+		log.Errorf("Error closing file gs://%v/%v", bucketName, fileName)
+	}
 
 	return data, nil
 }
