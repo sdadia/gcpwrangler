@@ -3,15 +3,17 @@ package storage
 import (
 	"cloud.google.com/go/storage"
 	"context"
+	"encoding/csv"
 	"fmt"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/api/iterator"
+	"io"
 	"regexp"
 	"time"
 )
 
-type BucketObjectLister interface {
-	ListObjectsInFolder(client *storage.Client, ctx context.Context, bucketName, foldername string) ([]string, error)
+type ReadCSV interface {
+	ReadCSV() ([][]string, error)
 }
 
 // formatPrefixForFolder This function adds / to the end after removing all trailing and leading /
@@ -147,4 +149,29 @@ func ListObjectsWithPrefix(client *storage.Client, ctx context.Context, bucketNa
 		objectNames = append(objectNames, obj.Name)
 	}
 	return objectNames, nil
+}
+
+func readBlobAsCSV(object *storage.ObjectHandle, ctx context.Context) ([][]string, error) {
+	reader, err := object.NewReader(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
+
+	// Create a CSV reader to parse the contents of the file.
+	csvReader := csv.NewReader(reader)
+	var csvData [][]string
+
+	// Read the CSV data line by line.
+	for {
+		record, err := csvReader.Read()
+		if err == io.EOF {
+			break
+		} else if err != nil {
+			return nil, fmt.Errorf("error reading CSV: %v", err)
+		}
+
+		csvData = append(csvData, record)
+	}
+	return csvData, nil
 }
