@@ -86,7 +86,7 @@ func ListBuckets(client *storage.Client, ctx context.Context, projectID string) 
 
 func ListFiles(client *storage.Client, ctx context.Context, bucketName, prefix string) ([]string, error) {
 	path := fmt.Sprintf("gs://%s/%s", bucketName, prefix)
-	log.Debugf("Loading objects in %v\n", path)
+	log.Debugf("Getting objects in %v\n", path)
 
 	ctx, cancel := context.WithTimeout(ctx, time.Second*30)
 	defer cancel()
@@ -104,7 +104,7 @@ func ListFiles(client *storage.Client, ctx context.Context, bucketName, prefix s
 		}
 		fileNames = append(fileNames, objAttr.Name)
 	}
-	log.Debugf("Loading %v objects in %v\n", len(fileNames), path)
+	log.Debugf("Got %v objects in %v\n", len(fileNames), path)
 
 	return fileNames, nil
 }
@@ -138,6 +138,30 @@ func ReadCSVFile(client *storage.Client, ctx context.Context, bucketName, fileNa
 		data = append(data, record)
 	}
 	log.Debugf("Loaded %v rows from csv file gs://%v/%v", len(data), bucketName, fileName)
+
+	return data, nil
+}
+
+func ReadFile(client *storage.Client, ctx context.Context, bucketName, fileName string) ([]byte, error) {
+	log.Debugf("Loading csv file gs://%v/%v", bucketName, fileName)
+
+	// Open the bucket and object.
+	bucket := client.Bucket(bucketName)
+	obj := bucket.Object(fileName)
+
+	// Read the object from GCS.
+	r, err := obj.NewReader(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open GCS object: %v", err)
+	}
+	defer r.Close()
+
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return nil, fmt.Errorf("error reading CSV: %v", err)
+	}
+
+	log.Debugf("Loaded %v bytes from csv file gs://%v/%v", len(data), bucketName, fileName)
 
 	return data, nil
 }
