@@ -8,13 +8,13 @@ import (
 	"time"
 )
 
-func CreateClientFromBackground() (*storage.Client, error) {
+func CreateClientFromBackground() (*storage.Client, context.Context, error) {
 	ctx := context.Background()
 	client, err := storage.NewClient(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("storage.NewClient: %w", err)
+		return nil, nil, fmt.Errorf("storage.NewClient: %w", err)
 	}
-	return client, err
+	return client, ctx, err
 }
 
 func GetBuckets(client *storage.Client, ctx context.Context, projectID string) ([]storage.BucketAttrs, error) {
