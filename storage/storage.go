@@ -6,8 +6,49 @@ import (
 	"fmt"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/api/iterator"
+	"regexp"
 	"time"
 )
+
+type BucketObjectLister interface {
+	ListObjectsInFolder(client *storage.Client, ctx context.Context, bucketName, foldername string) ([]string, error)
+}
+
+// formatPrefixForFolder This function adds / to the end after removing all trailing and leading /
+func formatPrefixForFolder(prefix string) string {
+	// Define the regular expression pattern to match leading and trailing slashes.
+	// The pattern ^/+ matches leading slashes, and /+$ matches trailing slashes.
+	pattern := regexp.MustCompile("^/|/$")
+
+	// Use the ReplaceAllString() function to replace the leading and trailing slashes with an empty string.
+	prefix = pattern.ReplaceAllString(prefix, "")
+	// Add 1 single / at the end
+	prefix = prefix + "/"
+
+	return prefix
+}
+
+func replaceTrailingSlashes(input string) string {
+	// Define the regular expression pattern to match trailing slashes.
+	// The pattern /+$ matches one or more trailing slashes.
+	pattern := regexp.MustCompile("/+$")
+
+	// Use the ReplaceAllString() function to replace the trailing slashes with an empty string.
+	result := pattern.ReplaceAllString(input, "")
+
+	return result
+}
+
+func replaceLeadingSlashes(input string) string {
+	// Define the regular expression pattern to match leading slashes.
+	// The pattern ^/+ matches one or more leading slashes.
+	pattern := regexp.MustCompile("^/+")
+
+	// Use the ReplaceAllString() function to replace the leading slashes with an empty string.
+	result := pattern.ReplaceAllString(input, "")
+
+	return result
+}
 
 func CreateClientFromBackground() (*storage.Client, context.Context, error) {
 	ctx := context.Background()
@@ -81,4 +122,29 @@ func GetObjectsInBucketWithPrefix(client *storage.Client, ctx context.Context, b
 	log.Debugf("Loading %v objects in %v\n", len(objectAttrs), path)
 
 	return objectAttrs, nil
+}
+
+func ListObjectsInFolder(client *storage.Client, ctx context.Context, bucketName, folderName string) ([]string, error) {
+	folderName = formatPrefixForFolder(folderName)
+	objAttrs, err := GetObjectsInBucketWithPrefix(client, ctx, bucketName, folderName)
+	if err != nil {
+		return nil, err
+	}
+	var objectNames = make([]string, len(objAttrs))
+	for _, obj := range objAttrs {
+		objectNames = append(objectNames, obj.Name)
+	}
+	return objectNames, nil
+}
+
+func ListObjectsWithPrefix(client *storage.Client, ctx context.Context, bucketName, prefix string) ([]string, error) {
+	objAttrs, err := GetObjectsInBucketWithPrefix(client, ctx, bucketName, prefix)
+	if err != nil {
+		return nil, err
+	}
+	var objectNames = make([]string, len(objAttrs))
+	for _, obj := range objAttrs {
+		objectNames = append(objectNames, obj.Name)
+	}
+	return objectNames, nil
 }
