@@ -9,12 +9,7 @@ import (
 	"google.golang.org/api/iterator"
 	"io"
 	"regexp"
-	"time"
 )
-
-type ReadCSV interface {
-	ReadCSV() ([][]string, error)
-}
 
 // formatPrefixForFolder This function adds / to the end after removing all trailing and leading /
 func formatPrefixForFolder(prefix string) string {
@@ -61,117 +56,62 @@ func CreateClientFromBackground() (*storage.Client, context.Context, error) {
 	return client, ctx, err
 }
 
-func GetBuckets(client *storage.Client, ctx context.Context, projectID string) ([]storage.BucketAttrs, error) {
-	log.Debugf("Loading buckets for project : %v\n", projectID)
+// ListFilesInBucketFolder lists files in a GCP bucket folder.
+func ListFilesInBucketFolder(client *storage.Client, ctx context.Context, bucketName, folderPath, delimiter string) ([]string, error) {
+	// Get the bucket handle.
+	bucket := client.Bucket(bucketName)
 
-	ctx, cancel := context.WithTimeout(ctx, time.Second*30)
-	defer cancel()
-
-	var buckets []storage.BucketAttrs
-	it := client.Buckets(ctx, projectID)
+	// List files in the specified folder path.
+	var files []string
+	query := &storage.Query{Prefix: folderPath, Delimiter: delimiter}
+	it := bucket.Objects(ctx, query)
 	for {
-		battrs, err := it.Next()
+		attrs, err := it.Next()
 		if err == iterator.Done {
 			break
 		}
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("error listing objects: %v", err)
 		}
-		buckets = append(buckets, *battrs)
+		files = append(files, attrs.Name)
 	}
-	log.Debugf("Loaded %v buckets for project : %v\n", len(buckets), projectID)
 
-	return buckets, nil
+	return files, nil
 }
 
-func ListBuckets(client *storage.Client, ctx context.Context, projectID string) ([]string, error) {
+// readCSVFileFromGCS reads a CSV file from GCS and sends its content to the dataChannel.
+func ReadCSVFileFromGCS(client *storage.Client, ctx context.Context, bucketName, filePath string) ([][]string, error) {
+	filePath = replaceLeadingSlashes(filePath)
+	path := fmt.Sprintf("gs://%v/%v", bucketName, filePath)
+	log.Infof("Loading csv file from %v\n", path)
 
-	// Get bucket atttributes
-	bucketAttrs, err := GetBuckets(client, ctx, projectID)
+	// Create a GCS bucket handle
+	bucket := client.Bucket(bucketName)
+
+	// Open the CSV file from GCS
+	obj := bucket.Object(filePath)
+	reader, err := obj.NewReader(ctx)
 	if err != nil {
-		return nil, err
-	}
-
-	// Get bucket names
-	var bucketNames = make([]string, len(bucketAttrs))
-	for _, battrs := range bucketAttrs {
-		bucketNames = append(bucketNames, battrs.Name)
-	}
-
-	return bucketNames, err
-}
-
-func GetObjectsInBucketWithPrefix(client *storage.Client, ctx context.Context, bucketName, prefix string) ([]storage.ObjectAttrs, error) {
-	path := fmt.Sprintf("gs://%s/%s", bucketName, prefix)
-	log.Debugf("Loading objects in %v\n", path)
-
-	ctx, cancel := context.WithTimeout(ctx, time.Second*30)
-	defer cancel()
-
-	var objectAttrs []storage.ObjectAttrs
-	query := &storage.Query{Prefix: prefix}
-	it := client.Bucket(bucketName).Objects(ctx, query)
-	for {
-		objAttr, err := it.Next()
-		if err == iterator.Done {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
-		objectAttrs = append(objectAttrs, *objAttr)
-	}
-	log.Debugf("Loading %v objects in %v\n", len(objectAttrs), path)
-
-	return objectAttrs, nil
-}
-
-func ListObjectsInFolder(client *storage.Client, ctx context.Context, bucketName, folderName string) ([]string, error) {
-	folderName = formatPrefixForFolder(folderName)
-	objAttrs, err := GetObjectsInBucketWithPrefix(client, ctx, bucketName, folderName)
-	if err != nil {
-		return nil, err
-	}
-	var objectNames = make([]string, len(objAttrs))
-	for _, obj := range objAttrs {
-		objectNames = append(objectNames, obj.Name)
-	}
-	return objectNames, nil
-}
-
-func ListObjectsWithPrefix(client *storage.Client, ctx context.Context, bucketName, prefix string) ([]string, error) {
-	objAttrs, err := GetObjectsInBucketWithPrefix(client, ctx, bucketName, prefix)
-	if err != nil {
-		return nil, err
-	}
-	var objectNames = make([]string, len(objAttrs))
-	for _, obj := range objAttrs {
-		objectNames = append(objectNames, obj.Name)
-	}
-	return objectNames, nil
-}
-
-func readBlobAsCSV(object *storage.ObjectHandle, ctx context.Context) ([][]string, error) {
-	reader, err := object.NewReader(ctx)
-	if err != nil {
+		log.Errorf("Error opening CSV file '%s': %v\n", filePath, err)
 		return nil, err
 	}
 	defer reader.Close()
 
-	// Create a CSV reader to parse the contents of the file.
+	// Parse the CSV content
 	csvReader := csv.NewReader(reader)
-	var csvData [][]string
-
-	// Read the CSV data line by line.
+	var data [][]string
 	for {
 		record, err := csvReader.Read()
-		if err == io.EOF {
-			break
-		} else if err != nil {
-			return nil, fmt.Errorf("error reading CSV: %v", err)
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			log.Errorf("Error reading CSV record from file '%s': %v\n", filePath, err)
+			return nil, err
 		}
-
-		csvData = append(csvData, record)
+		data = append(data, record)
 	}
-	return csvData, nil
+	log.Debugf("Loaded %v rows from %v", len(data), path)
+
+	return data, nil
 }
