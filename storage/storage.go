@@ -57,3 +57,28 @@ func ListBuckets(client *storage.Client, ctx context.Context, projectID string) 
 
 	return bucketNames, err
 }
+
+func GetObjectsInBucketWithPrefix(client *storage.Client, ctx context.Context, bucketName, prefix string) ([]storage.ObjectAttrs, error) {
+	path := fmt.Sprintf("gs://%s/%s", bucketName, prefix)
+	log.Debugf("Loading objects in %v\n", path)
+
+	ctx, cancel := context.WithTimeout(ctx, time.Second*30)
+	defer cancel()
+
+	var objectAttrs []storage.ObjectAttrs
+	query := &storage.Query{Prefix: prefix}
+	it := client.Bucket(bucketName).Objects(ctx, query)
+	for {
+		objAttr, err := it.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		objectAttrs = append(objectAttrs, *objAttr)
+	}
+	log.Debugf("Loading %v objects in %v\n", len(objectAttrs), path)
+
+	return objectAttrs, nil
+}
