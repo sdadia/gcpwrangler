@@ -61,13 +61,13 @@ func CreateClientFromBackground() (*storage.Client, context.Context, error) {
 	return client, ctx, err
 }
 
-func GetBuckets(client *storage.Client, ctx context.Context, projectID string) ([]storage.BucketAttrs, error) {
+func ListBuckets(client *storage.Client, ctx context.Context, projectID string) ([]string, error) {
 	log.Debugf("Loading buckets for project : %v\n", projectID)
 
 	ctx, cancel := context.WithTimeout(ctx, time.Second*30)
 	defer cancel()
 
-	var buckets []storage.BucketAttrs
+	var buckets []string
 	it := client.Buckets(ctx, projectID)
 	for {
 		battrs, err := it.Next()
@@ -77,38 +77,21 @@ func GetBuckets(client *storage.Client, ctx context.Context, projectID string) (
 		if err != nil {
 			return nil, err
 		}
-		buckets = append(buckets, *battrs)
+		buckets = append(buckets, battrs.Name)
 	}
 	log.Debugf("Loaded %v buckets for project : %v\n", len(buckets), projectID)
 
 	return buckets, nil
 }
 
-func ListBuckets(client *storage.Client, ctx context.Context, projectID string) ([]string, error) {
-
-	// Get bucket atttributes
-	bucketAttrs, err := GetBuckets(client, ctx, projectID)
-	if err != nil {
-		return nil, err
-	}
-
-	// Get bucket names
-	var bucketNames = make([]string, len(bucketAttrs))
-	for _, battrs := range bucketAttrs {
-		bucketNames = append(bucketNames, battrs.Name)
-	}
-
-	return bucketNames, err
-}
-
-func GetObjectsInBucketWithPrefix(client *storage.Client, ctx context.Context, bucketName, prefix string) ([]storage.ObjectAttrs, error) {
+func ListFiles(client *storage.Client, ctx context.Context, bucketName, prefix string) ([]string, error) {
 	path := fmt.Sprintf("gs://%s/%s", bucketName, prefix)
 	log.Debugf("Loading objects in %v\n", path)
 
 	ctx, cancel := context.WithTimeout(ctx, time.Second*30)
 	defer cancel()
 
-	var objectAttrs []storage.ObjectAttrs
+	var fileNames []string
 	query := &storage.Query{Prefix: prefix}
 	it := client.Bucket(bucketName).Objects(ctx, query)
 	for {
@@ -119,59 +102,42 @@ func GetObjectsInBucketWithPrefix(client *storage.Client, ctx context.Context, b
 		if err != nil {
 			return nil, err
 		}
-		objectAttrs = append(objectAttrs, *objAttr)
+		fileNames = append(fileNames, objAttr.Name)
 	}
-	log.Debugf("Loading %v objects in %v\n", len(objectAttrs), path)
+	log.Debugf("Loading %v objects in %v\n", len(fileNames), path)
 
-	return objectAttrs, nil
+	return fileNames, nil
 }
 
-func ListObjectsInFolder(client *storage.Client, ctx context.Context, bucketName, folderName string) ([]string, error) {
-	folderName = formatPrefixForFolder(folderName)
-	objAttrs, err := GetObjectsInBucketWithPrefix(client, ctx, bucketName, folderName)
+func ReadCSVFile(client *storage.Client, ctx context.Context, bucketName, fileName string) ([][]string, error) {
+	log.Debugf("Loading csv file gs://%v/%v", bucketName, fileName)
+
+	// Open the bucket and object.
+	bucket := client.Bucket(bucketName)
+	obj := bucket.Object(fileName)
+
+	// Read the object from GCS.
+	r, err := obj.NewReader(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to open GCS object: %v", err)
 	}
-	var objectNames = make([]string, len(objAttrs))
-	for _, obj := range objAttrs {
-		objectNames = append(objectNames, obj.Name)
-	}
-	return objectNames, nil
-}
+	defer r.Close()
 
-func ListObjectsWithPrefix(client *storage.Client, ctx context.Context, bucketName, prefix string) ([]string, error) {
-	objAttrs, err := GetObjectsInBucketWithPrefix(client, ctx, bucketName, prefix)
-	if err != nil {
-		return nil, err
-	}
-	var objectNames = make([]string, len(objAttrs))
-	for _, obj := range objAttrs {
-		objectNames = append(objectNames, obj.Name)
-	}
-	return objectNames, nil
-}
+	// Parse the CSV data.
+	reader := csv.NewReader(r)
+	var data [][]string
 
-func readBlobAsCSV(object *storage.ObjectHandle, ctx context.Context) ([][]string, error) {
-	reader, err := object.NewReader(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer reader.Close()
-
-	// Create a CSV reader to parse the contents of the file.
-	csvReader := csv.NewReader(reader)
-	var csvData [][]string
-
-	// Read the CSV data line by line.
 	for {
-		record, err := csvReader.Read()
+		record, err := reader.Read()
 		if err == io.EOF {
 			break
-		} else if err != nil {
+		}
+		if err != nil {
 			return nil, fmt.Errorf("error reading CSV: %v", err)
 		}
-
-		csvData = append(csvData, record)
+		data = append(data, record)
 	}
-	return csvData, nil
+	log.Debugf("Loaded %v rows from csv file gs://%v/%v", len(data), bucketName, fileName)
+
+	return data, nil
 }
