@@ -5,16 +5,15 @@ import (
 	"context"
 	"encoding/csv"
 	"fmt"
+	"github.com/maruel/natural"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/api/iterator"
+
 	"io"
 	"regexp"
+	"sort"
 	"time"
 )
-
-type ReadCSV interface {
-	ReadCSV() ([][]string, error)
-}
 
 // formatPrefixForFolder This function adds / to the end after removing all trailing and leading /
 func formatPrefixForFolder(prefix string) string {
@@ -84,14 +83,20 @@ func ListBuckets(client *storage.Client, ctx context.Context, projectID string) 
 	return buckets, nil
 }
 
-func ListFiles(client *storage.Client, ctx context.Context, bucketName, prefix string) ([]string, error) {
+type objectByCreationTime []*storage.ObjectAttrs
+
+func (o objectByCreationTime) Len() int           { return len(o) }
+func (o objectByCreationTime) Less(i, j int) bool { return o[i].Updated.Before(o[j].Updated) }
+func (o objectByCreationTime) Swap(i, j int)      { o[i], o[j] = o[j], o[i] }
+
+func ListFiles(client *storage.Client, ctx context.Context, bucketName, prefix string, sortBy string) ([]string, error) {
 	path := fmt.Sprintf("gs://%s/%s", bucketName, prefix)
 	log.Debugf("Getting objects in %v\n", path)
 
 	ctx, cancel := context.WithTimeout(ctx, time.Second*30)
 	defer cancel()
 
-	var fileNames []string
+	objects := make([]*storage.ObjectAttrs, 0)
 	query := &storage.Query{Prefix: prefix}
 	it := client.Bucket(bucketName).Objects(ctx, query)
 	for {
@@ -102,9 +107,23 @@ func ListFiles(client *storage.Client, ctx context.Context, bucketName, prefix s
 		if err != nil {
 			return nil, err
 		}
-		fileNames = append(fileNames, objAttr.Name)
+		objects = append(objects, objAttr)
 	}
-	log.Debugf("Got %v objects in %v\n", len(fileNames), path)
+	log.Debugf("Got %v objects in %v\n", len(objects), path)
+
+	// sort list of objects by timestamp
+	if sortBy == "CreationTime" {
+		sort.Sort(objectByCreationTime(objects))
+	}
+
+	var fileNames []string
+	for _, obj := range objects {
+		fileNames = append(fileNames, obj.Name)
+	}
+
+	if sortBy == "Natsort" {
+		sort.Sort(natural.StringSlice(fileNames))
+	}
 
 	return fileNames, nil
 }
@@ -112,18 +131,13 @@ func ListFiles(client *storage.Client, ctx context.Context, bucketName, prefix s
 func ReadCSVFile(client *storage.Client, ctx context.Context, bucketName, fileName string) ([][]string, error) {
 	log.Debugf("Loading csv file gs://%v/%v", bucketName, fileName)
 
-	// Open the bucket and object.
-	bucket := client.Bucket(bucketName)
-	obj := bucket.Object(fileName)
-
-	// Read the object from GCS.
-	r, err := obj.NewReader(ctx)
+	objectReader, err := GetObjectReader(client, ctx, bucketName, fileName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open GCS object: %v", err)
+		return nil, err
 	}
 
 	// Parse the CSV data.
-	reader := csv.NewReader(r)
+	reader := csv.NewReader(objectReader)
 	var data [][]string
 
 	for {
@@ -138,7 +152,7 @@ func ReadCSVFile(client *storage.Client, ctx context.Context, bucketName, fileNa
 	}
 	log.Debugf("Loaded %v rows from csv file gs://%v/%v", len(data), bucketName, fileName)
 
-	err = r.Close()
+	err = objectReader.Close()
 	if err != nil {
 		log.Errorf("Error closing file gs://%v/%v", bucketName, fileName)
 	}
@@ -146,29 +160,17 @@ func ReadCSVFile(client *storage.Client, ctx context.Context, bucketName, fileNa
 	return data, nil
 }
 
-func ReadFile(client *storage.Client, ctx context.Context, bucketName, fileName string) ([]byte, error) {
-	log.Debugf("Loading csv file gs://%v/%v", bucketName, fileName)
+func GetObjectReader(client *storage.Client, ctx context.Context, bucketName, objectKey string) (io.ReadCloser, error) {
+	log.Debugf("Loading object reader for gs://%v/%v", bucketName, objectKey)
 
 	// Open the bucket and object.
 	bucket := client.Bucket(bucketName)
-	obj := bucket.Object(fileName)
+	obj := bucket.Object(objectKey)
 
 	// Read the object from GCS.
-	r, err := obj.NewReader(ctx)
+	reader, err := obj.NewReader(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open GCS object: %v", err)
 	}
-	data, err := io.ReadAll(r)
-	if err != nil {
-		return nil, fmt.Errorf("error reading CSV: %v", err)
-	}
-
-	log.Debugf("Loaded %v bytes from csv file gs://%v/%v", len(data), bucketName, fileName)
-
-	err = r.Close()
-	if err != nil {
-		log.Errorf("Error closing file gs://%v/%v", bucketName, fileName)
-	}
-
-	return data, nil
+	return reader, nil
 }
