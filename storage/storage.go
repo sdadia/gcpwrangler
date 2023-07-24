@@ -131,6 +131,7 @@ func ListFiles(client *storage.Client, ctx context.Context, bucketName, prefix s
 func ReadCSVFile(client *storage.Client, ctx context.Context, bucketName, fileName string) ([][]string, error) {
 	log.Debugf("Loading csv file gs://%v/%v", bucketName, fileName)
 
+	// Get Object reader
 	objectReader, err := GetObjectReader(client, ctx, bucketName, fileName)
 	if err != nil {
 		return nil, err
@@ -160,7 +161,34 @@ func ReadCSVFile(client *storage.Client, ctx context.Context, bucketName, fileNa
 	return data, nil
 }
 
-func GetObjectReader(client *storage.Client, ctx context.Context, bucketName, objectKey string) (io.ReadCloser, error) {
+func ReadFile(client *storage.Client, ctx context.Context, bucketName, fileName string) ([]byte, error) {
+	path := fmt.Sprintf("gs://%v/%v", bucketName, fileName)
+	log.Debugf("Reading file %v", path)
+
+	// Get reader
+	objectReader, err := GetObjectReader(client, ctx, bucketName, fileName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open GCS object: %v", err)
+	}
+
+	// Parse the CSV data.
+	data := make([]byte, objectReader.Attrs.Size)
+	numBytes, err := objectReader.Read(data)
+	if err != nil {
+		log.Errorf("Error reading file %v. Error is %v", path, err)
+		return nil, err
+	}
+	log.Debugf("Loaded %v bytes from %v", numBytes, path)
+
+	err = objectReader.Close()
+	if err != nil {
+		log.Errorf("Error closing file %v", path)
+	}
+
+	return data, nil
+}
+
+func GetObjectReader(client *storage.Client, ctx context.Context, bucketName, objectKey string) (*storage.Reader, error) {
 	log.Debugf("Loading object reader for gs://%v/%v", bucketName, objectKey)
 
 	// Open the bucket and object.
@@ -173,4 +201,72 @@ func GetObjectReader(client *storage.Client, ctx context.Context, bucketName, ob
 		return nil, fmt.Errorf("failed to open GCS object: %v", err)
 	}
 	return reader, nil
+}
+
+func GetObjectWriter(client *storage.Client, ctx context.Context, bucketName, objectKey string) (io.WriteCloser, error) {
+	log.Debugf("Getting object writer for for gs://%v/%v", bucketName, objectKey)
+
+	// Open the bucket and object.
+	bucket := client.Bucket(bucketName)
+	obj := bucket.Object(objectKey)
+
+	// Read the object from GCS.
+	writer := obj.NewWriter(ctx)
+	return writer, nil
+}
+
+func WriteToFile(client *storage.Client, ctx context.Context, bucketName, objectKey string, data []byte) error {
+	path := fmt.Sprintf("gs://%v/%v", bucketName, objectKey)
+
+	log.Infof("Writing %v bytes to %v", len(data), path)
+	// Get writer
+	writer, err := GetObjectWriter(client, ctx, bucketName, objectKey)
+	if err != nil {
+		log.Errorf("Error getting writer for %v. Error is %v", path, err)
+		return err
+	}
+
+	// Write the data
+	numBytes, err := writer.Write(data)
+	if err != nil {
+		log.Errorf("Error writing data to %v. Error is %v", path, err)
+		return err
+	}
+
+	// Close the file handle
+	if err := writer.Close(); err != nil {
+		log.Fatalf("Error closing file handle for %v. Error is: %v", path, err)
+	}
+	log.Infof("Wrote %v bytes to %v", numBytes, path)
+
+	return nil
+}
+
+func WriteToCSVFile(client *storage.Client, ctx context.Context, bucketName, objectKey string, csvRecords [][]string) error {
+	path := fmt.Sprintf("gs://%v/%v", bucketName, objectKey)
+
+	log.Infof("Writing %v records to %v", len(csvRecords), path)
+	// Get writer
+	writer, err := GetObjectWriter(client, ctx, bucketName, objectKey)
+	if err != nil {
+		log.Errorf("Error getting writer for %v. Error is %v", path, err)
+		return err
+	}
+
+	// Write the data
+	csvWriter := csv.NewWriter(writer)
+	err = csvWriter.WriteAll(csvRecords)
+	csvWriter.Flush()
+	if err != nil {
+		log.Errorf("Error writing data to %v. Error is %v", path, err)
+		return err
+	}
+
+	// Close the file handle
+	if err := writer.Close(); err != nil {
+		log.Fatalf("Error closing file handle for %v. Error is: %v", path, err)
+	}
+	log.Infof("Wrote %v records to %v", len(csvRecords), path)
+
+	return nil
 }
